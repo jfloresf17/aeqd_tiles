@@ -1,10 +1,13 @@
 import pathlib
-from typing import List
+from calendar import monthrange
+from datetime import datetime
+from typing import List, Optional, Tuple
 
 import ee
 import geopandas as gpd
 import numpy as np
 import pyproj
+import requests
 import shapely
 import tqdm
 import xarray as xr
@@ -18,7 +21,7 @@ ee.Initialize(opt_url="https://earthengine-highvolume.googleapis.com")
 def generate_grids(
     tile_name: str = "AF",
     tile_extent: float = 500 * 128,
-    dst_path: str = "./output",
+    dst_path: pathlib.Path = pathlib.Path("./output"),
 ) -> List[List[float]]:
     """
     Generate a grid of points for a given Equi7Grid tile name.
@@ -26,7 +29,7 @@ def generate_grids(
     Args:
     tile_name (str): The Equi7Grid tile name.
     tile_extent (float): The extent of the grid cell in meters.
-    dst_path (str): The destination path to save the grid.
+    dst_path (pathlib.Path): The destination path to save the grid cells.
 
     Returns:
     List[List[float]]: A list of lists with the coordinates of the
@@ -104,7 +107,6 @@ def generate_grids(
         crs="EPSG:4326",
     )
 
-    dst_path = pathlib.Path(dst_path)
     folder_path = dst_path / tile_name
     folder_path.mkdir(parents=True, exist_ok=True)
 
@@ -113,56 +115,164 @@ def generate_grids(
     )
 
 
-def get_datacube(
-    buffer_shape: shapely.geometry.Polygon,
-    tile_name: str = "AF",
-    product: str = "MODIS_061_MCD43A4",
-    start_date: str = "2019-01-15",
-    end_date: str = "2019-12-31",
-) -> xr.Dataset:
+def apply_quality_filter(
+    image: ee.Image, data_bands: List[str], quality_bands: List[str]
+) -> ee.Image:
     """
-    Get a datacube from Earth Engine for a given buffer shape.
-
+    Apply quality filter to the image.
     Args:
-    buffer_shape (shapely.geometry.Polygon): The buffer shape.
-    tile_name (str): The Equi7Grid tile name.
-    product (str): The product name.
+    image (ee.Image): The image to apply the filter.
+    data_bands (List[str]): The data bands to filter.
+    quality_bands (List[str]): The quality bands to filter.
+
+    Returns:
+    ee.Image: The filtered image.
+    """
+    # Apply filter to each quality bands
+    for dband, qband in zip(data_bands, quality_bands):
+        # Get the quality band
+        quality = image.select(qband)
+        # Mask the data band
+        data = image.select(dband).updateMask(quality.eq(0))
+        # Replace the data band
+        image = image.addBands(data, overwrite=True)
+
+    return image
+
+
+def filter_by_month(
+    start_date: str = "2019-01-01", end_date: str = "2022-12-31"
+) -> List[List[Tuple[datetime, datetime]]]:
+    """
+    Filter the date range by month.
+    Args:
     start_date (str): The start date.
     end_date (str): The end date.
 
     Returns:
-    xr.Dataset: The datacube for the given buffer polygon.
+    List[List[Tuple[datetime, datetime]]]: The list of list of tuples with the date range.
+    """
+
+    # Divide the range of dates by scale
+    start_date = datetime.strptime(start_date, "%Y-%m-%d")
+    end_date = datetime.strptime(end_date, "%Y-%m-%d")
+
+    # List to store the dates
+    filters = []
+
+    current_date = datetime(start_date.year, start_date.month, start_date.day)
+    while current_date <= end_date:
+        last_day = monthrange(current_date.year, current_date.month)[1]
+        interval_end = datetime(current_date.year, current_date.month, last_day)
+
+        # To avoid end date greater than global end date
+        if interval_end > end_date:
+            interval_end = end_date
+
+        filters.append((current_date, interval_end))
+
+        # Get the next month
+        current_date = datetime(
+            current_date.year + current_date.month // 12,
+            ((current_date.month % 12) + 1),
+            1,
+        )
+    # Group by month
+    months_filter = [
+        [intervalo for intervalo in filters if intervalo[0].month == month]
+        for month in range(1, 13)
+    ]
+
+    return months_filter
+
+
+def save_composite(
+    composite: ee.Image,
+    aoi: ee.Geometry,
+    crs: str,
+    resolution: int,
+    out_path: str,
+    data_bands: List[str],
+):
+    """
+    Save the composite to disk.
+    Args:
+    composite (ee.Image): The composite to save.
+    aoi (ee.Geometry): The area of interest.
+    crs (str): The coordinate reference system.
+    resolution (int): The resolution of the composite.
+    out_path (str): The output path to save the composite.
+    data_bands (List[str]): The data bands to save.
+    """
+
+    # Get the composite as a download URL
+    url = composite.getDownloadURL(
+        {
+            "scale": resolution,
+            "region": aoi,
+            "filePerBand": False,
+            "format": "GeoTIFF",
+            "crs": crs,
+            "bands": data_bands,
+        }
+    )
+    response = requests.get(url)
+
+    # Save the composite
+    if response.status_code == 200:
+        with open(out_path, "wb") as file:
+            file.write(response.content)
+    else:
+        raise ValueError(
+            f"Error to download the composite: {response.status_code}"
+        )
+
+
+def composite_collection(
+    geom: shapely.geometry.Polygon,
+    tile_name: str = "AF",
+    tile_id: int = 0,
+    product: str = "MODIS_061_MCD43A4",
+    subproduct: Optional[str] = None,
+    start_date: str = None,
+    end_date: str = None,
+    dst_folder: Optional[pathlib.Path] = pathlib.Path("./output"),
+):
+    """
+    Composite the collection.
+
+    Args:
+    geom (shapely.geometry.Polygon): The geometry to filter the collection.
+    tile_name (str): The Equi7Grid tile name.
+    tile_id (int): The tile id for grid.
+    product (str): The product name.
+    subproducts (str): The subproduct name of selected product. Default is None.
+    time (str): The time unit to composite by unit time. Can be "year", "month", "week", "day".
+    start_date (str): The start date.
+    end_date (str): The end date.
+    dst_folder (pathlib.Path): The destination folder to save the composite. Default is "./output".
     """
 
     # Convert shapely.geometry.Polygon to ee.Geometry.Polygon
-    buffer_shape = list(buffer_shape.exterior.coords.xy)
-    buffer_coords = [[x, y] for x, y in zip(buffer_shape[0], buffer_shape[1])]
-    polygon = ee.Geometry.Polygon(buffer_coords)
+    shape = list(geom.exterior.coords.xy)
+    coords = [[x, y] for x, y in zip(shape[0], shape[1])]
+    polygon = ee.Geometry.Polygon(coords)
 
     # Get AOI
     aoi = polygon.getInfo()
 
-    # Generate BBox
-    west = aoi["coordinates"][0][0][0]
-    south = aoi["coordinates"][0][0][1]
-    east = aoi["coordinates"][0][2][0]
-    north = aoi["coordinates"][0][2][1]
-
-    BBox = ee.Geometry.BBox(west, south, east, north)
-
-    # Get the MODIS collection
+    # Get the sensor metadata
     sensor_metadata = get_sensor_products()
     snippet = sensor_metadata.sensors[product].snippet
-    bands = sensor_metadata.sensors[product].bands
     resolution = sensor_metadata.sensors[product].resolution
-    edge_size = sensor_metadata.sensors[product].edge_size
 
-    collection_filter = (
-        ee.ImageCollection(snippet)
-        .filterBounds(BBox)
-        .filterDate(start_date, end_date)
-        .select(bands)
-    )
+    # Get the bands
+    bands = sensor_metadata.sensors[product].bands
+
+    # Get start and end date
+    if start_date is None and end_date is None:
+        start_date = sensor_metadata.sensors[product].start_date
+        end_date = sensor_metadata.sensors[product].end_date
 
     # Get the CRS
     equi7 = get_equi7_tiles()
@@ -170,37 +280,83 @@ def get_datacube(
     with open(tiles.prj_path, "r") as file:
         crs = file.read()
 
-    # Get datacube from Earth Engine
-    cube = xr.open_dataset(
-        collection_filter, engine="ee", geometry=BBox, scale=resolution, crs=crs
-    )
+    # Get the folder to save the composite
+    tile_id = str(tile_id).zfill(4)
+    folder = dst_folder / f"{tile_name}/{product}"
+    folder = pathlib.Path(folder)
+    folder.mkdir(parents=True, exist_ok=True)
 
-    # Rename and transpose dims
-    cube = (
-        cube.rename(Y="y", X="x")
-        .to_array("band")
-        .transpose("time", "band", "y", "x")
-    )
+    # Download the composite
+    if "MODIS" in product:
+        # Filtering by diferent MODIS products
+        if "MODIS_061_MCD43A4" in product:
+            # Filter by quality bands
+            quality_bands = bands[7:]
+            data_bands = bands[:7]
 
-    # Delete attributes to the cube
-    cube.attrs = dict()
+        elif "MODIS_061_MOD11A1" in product:
+            # Filter by quality bands
+            quality_bands = bands[2:]
+            data_bands = bands[:2]
 
-    # Add attributes to the cube
-    collection_id = collection_filter.get("system:id").getInfo()
+        # Get the collection
+        collection = (
+            ee.ImageCollection(snippet)
+            .filterBounds(aoi)
+            .filterDate(start_date, end_date)
+            .select(bands)
+        )
 
-    cube.attrs = dict(
-        collection=collection_id,
-        stac="https://earthengine-stac.storage.googleapis.com/catalog/catalog.json",
-        crs=crs,
-        resolution=resolution,
-        edge_size=edge_size,
-        central_lat=(north + south) / 2,
-        central_lon=(east + west) / 2,
-        time_start=start_date,
-        time_end=end_date,
-    )
+        # Apply quality filter
+        quality_collection = collection.map(
+            lambda image: apply_quality_filter(image, data_bands, quality_bands)
+        )
 
-    # Rename the cube
-    cube.name = collection_id
+        # Generate a compsity by months
+        filter_months = filter_by_month(start_date, end_date)
 
-    return cube
+        for i, months in tqdm.tqdm(enumerate(filter_months)):
+            monthly_composites = []
+            for month in months:
+                month_collection = quality_collection.filterDate(
+                    month[0].strftime("%Y-%m-%d"), month[1].strftime("%Y-%m-%d")
+                )
+                # Composite the collection
+                monthly_composite = month_collection.median()
+                monthly_composites.append(monthly_composite)
+
+            # Combine the monthly composites to generate a new collection
+            composite = ee.ImageCollection(monthly_composites).median()
+
+            # Generate the out path
+            month_name = datetime(2000, i + 1, 1).strftime("%B")
+            out_path = folder / f"{tile_id}_{month_name}.tif"
+
+            # Save the composite
+            save_composite(
+                composite, aoi, crs, resolution, out_path, data_bands
+            )
+
+    elif product in ["s1gbm", "isric", "ai0", "gwa"]:
+        snippet2 = snippet[subproduct]
+        collection = ee.ImageCollection(snippet2).filterBounds(aoi)
+        composite = collection.median()
+
+        # Generate the out path
+        out_path = folder / subproduct
+        pathlib.Path(out_path).mkdir(parents=True, exist_ok=True)
+
+        out_path = out_path / f"{tile_id}.tif"
+
+        # Save the composite
+        save_composite(composite, aoi, crs, resolution, out_path, bands)
+
+    else:
+        collection = ee.ImageCollection(snippet).filterBounds(aoi)
+        # Composite the collection
+        composite = collection.median()
+
+        out_path = folder / f"{tile_id}.tif"
+
+        # Save the composite
+        save_composite(composite, aoi, crs, resolution, out_path, bands)

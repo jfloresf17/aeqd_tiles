@@ -96,6 +96,12 @@ def get_sensor_products(
                 "Nadir_Reflectance_Band6",
                 "Nadir_Reflectance_Band7",
                 "BRDF_Albedo_Band_Mandatory_Quality_Band1",
+                "BRDF_Albedo_Band_Mandatory_Quality_Band2",
+                "BRDF_Albedo_Band_Mandatory_Quality_Band3",
+                "BRDF_Albedo_Band_Mandatory_Quality_Band4",
+                "BRDF_Albedo_Band_Mandatory_Quality_Band5",
+                "BRDF_Albedo_Band_Mandatory_Quality_Band6",
+                "BRDF_Albedo_Band_Mandatory_Quality_Band7",
             ],
             "resolution": 500,
             "edge_size": 128,
@@ -136,7 +142,7 @@ def get_sensor_products(
     if "fabdem" in product:
         sensors["fabdem"] = {
             "snippet": "projects/sat-io/open-datasets/FABDEM",
-            "bands": None,
+            "bands": [],
             "resolution": 30,
             "edge_size": 2133,
             "start_date": None,
@@ -146,7 +152,7 @@ def get_sensor_products(
     if "geomorpho90" in product:
         sensors["geomorpho90"] = {
             "snippet": "projects/sat-io/open-datasets/Geomorpho90m/geom",
-            "bands": None,
+            "bands": [],
             "resolution": 250,
             "edge_size": 256,
             "start_date": None,
@@ -159,9 +165,9 @@ def get_sensor_products(
                 "VH": "projects/sat-io/open-datasets/S1GBM/normalized_s1_backscatter_VH",
                 "VV": "projects/sat-io/open-datasets/S1GBM/normalized_s1_backscatter_VV",
             },
-            "bands": None,
-            "resolution": 10,
-            "edge_size": 6400,
+            "bands": [],
+            "resolution": 100,
+            "edge_size": 2560,
             "start_date": None,
             "end_date": None,
         }
@@ -184,7 +190,7 @@ def get_sensor_products(
                     "ocs_mean",
                 ]
             },
-            "bands": None,
+            "bands": [],
             "resolution": 250,
             "edge_size": 256,
             "start_date": None,
@@ -194,7 +200,7 @@ def get_sensor_products(
     if "global_salinity" in product:
         sensors["global_salinity"] = {
             "snippet": "projects/sat-io/open-datasets/global_soil_salinity",
-            "bands": None,
+            "bands": [],
             "resolution": 250,
             "edge_size": 256,
             "start_date": None,
@@ -207,7 +213,7 @@ def get_sensor_products(
                 key: f"projects/sat-io/open-datasets/global_ai/{key}"
                 for key in ["global_ai_yearly", "global_ai_monthly"]
             },
-            "bands": None,
+            "bands": [],
             "resolution": 1000,
             "edge_size": 64,
             "start_date": None,
@@ -226,7 +232,7 @@ def get_sensor_products(
                     "wind-speed",
                 ]
             },
-            "bands": None,
+            "bands": [],
             "resolution": 1000,
             "edge_size": 64,
             "start_date": None,
