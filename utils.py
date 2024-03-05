@@ -308,7 +308,7 @@ def download(
 
     # Open gpkg
     gdf_t1 = gpd.read_file(
-        f"https://huggingface.co/datasets/jfloresf/landclip/resolve/main/grids/{zone}/{zone}.gpkg",
+        f"https://huggingface.co/datasets/jfloresf/aeqd_gpkg/resolve/main/grids/{zone}/{zone}.gpkg",
         layer="PROJ_T1",
     )
     shape = gdf_t1[gdf_t1["TILE"] == T1_tile]
