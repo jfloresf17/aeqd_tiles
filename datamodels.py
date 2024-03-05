@@ -3,89 +3,43 @@ from typing import Dict, List, Optional, Union
 
 from pydantic import BaseModel
 
-
-class Equi7GridTiles(BaseModel):
-    grid_path: pathlib.Path
-    land_path: pathlib.Path
-    prj_path: pathlib.Path
-    tile_extent: float
-
-
-class Equi7Grid(BaseModel):
-    tiles: Dict[str, Equi7GridTiles]
-
-
 class SensorProduct(BaseModel):
     snippet: Union[Dict, str]
     bands: Optional[List[str]]
     resolution: float
-    edge_size: int
     start_date: Optional[str]
     end_date: Optional[str]
-
 
 class Sensors(BaseModel):
     sensors: Dict[str, SensorProduct]
 
 
-def get_equi7_tiles(
-    tile_names: Optional[List[str]] = [
-        "AF",
-        "AN",
-        "AS",
-        "EU",
-        "NA",
-        "OC",
-        "SA",
-    ],
-    tile_extent: float = 500 * 128,
-) -> Equi7Grid:
-    # Create a dictionary of tiles
-    tiles = dict()
-
-    # Add the tiles to the dictionary
-    if tile_names is not None:
-        for tile_name in tile_names:
-            tiles[tile_name] = {
-                "grid_path": pathlib.Path(
-                    f"./equi7grid/{tile_name}/{tile_name}_T6.geojson"
-                ),
-                "land_path": pathlib.Path(
-                    f"./equi7grid/{tile_name}/LAND_{tile_name}.geojson"
-                ),
-                "prj_path": pathlib.Path(
-                    f"./equi7grid/{tile_name}/WKT_{tile_name}.prj"
-                ),
-                "tile_extent": tile_extent,
-            }
-
-    return Equi7Grid(tiles=tiles)
-
-
 def get_sensor_products(
     product: Optional[List[str]] = [
-        "MODIS_061_MCD43A4",
-        "WorldCLIM_v2",
-        "MODIS_061_MOD11A1",
-        "BNU_FGS_CCNL_v1",
+        "MODIS_BRDF",
+        "WorldCLIM",
+        "MODIS_LAND_SURFACE",
+        "CCNL",
         "fabdem",
-        "geomorpho90",
+        "geomorpho90m",
         "s1gbm",
         "isric",
-        "global_salinity",
+        "soil_salinity",
         "ai0",
         "gwa",
-        "ESA_WorldCover_v200",
+        "WorldCover",
         "OpenLandMap",
-        "Oxford_MAP",
+        "malaria",
+        "habitat",
+        "GLO_DEM",
     ]
 ) -> Sensors:
     # Create a dictionary of sensors
     sensors = dict()
 
     # Add the sensors to the dictionary
-    if "MODIS_061_MCD43A4" in product:
-        sensors["MODIS_061_MCD43A4"] = {
+    if "MODIS_BRDF" in product:
+        sensors["MODIS_BRDF"] = {
             "snippet": "MODIS/061/MCD43A4",
             "bands": [
                 "Nadir_Reflectance_Band1",
@@ -103,38 +57,34 @@ def get_sensor_products(
                 "BRDF_Albedo_Band_Mandatory_Quality_Band6",
                 "BRDF_Albedo_Band_Mandatory_Quality_Band7",
             ],
-            "resolution": 500,
-            "edge_size": 128,
+            "resolution": 512,
             "start_date": "2000-02-24",
             "end_date": None,
         }
 
-    if "WorldCLIM_v2" in product:
-        sensors["WorldCLIM_v2"] = {
+    if "WorldCLIM" in product:
+        sensors["WorldCLIM"] = {
             "snippet": "WORLDCLIM/V1/MONTHLY",
             "bands": ["tavg", "tmin", "tmax", "prec"],
-            "resolution": 1000,
-            "edge_size": 64,
+            "resolution": 1024,
             "start_date": "1960-01-01",
             "end_date": "1990-01-01",
         }
 
-    if "MODIS_061_MOD11A1" in product:
-        sensors["MODIS_061_MOD11A1"] = {
+    if "MODIS_LAND_SURFACE" in product:
+        sensors["MODIS_LAND_SURFACE"] = {
             "snippet": "MODIS/061/MOD11A1",
             "bands": ["LST_Day_1km", "LST_Night_1km", "QC_Day", "QC_Night"],
-            "resolution": 1000,
-            "edge_size": 64,
+            "resolution": 1024,
             "start_date": "2000-02-24",
             "end_date": None,
         }
 
-    if "BNU_FGS_CCNL_v1" in product:
-        sensors["BNU_FGS_CCNL_v1"] = {
+    if "CCNL" in product:
+        sensors["CCNL"] = {
             "snippet": "BNU/FGS/CCNL/v1",
             "bands": ["b1"],
-            "resolution": 1000,
-            "edge_size": 64,
+            "resolution": 1024,
             "start_date": "1992-01-01",
             "end_date": "2014-01-01",
         }
@@ -143,18 +93,16 @@ def get_sensor_products(
         sensors["fabdem"] = {
             "snippet": "projects/sat-io/open-datasets/FABDEM",
             "bands": [],
-            "resolution": 30,
-            "edge_size": 2133,
+            "resolution": 128,
             "start_date": None,
             "end_date": None,
         }
 
-    if "geomorpho90" in product:
-        sensors["geomorpho90"] = {
+    if "geomorpho90m" in product:
+        sensors["geomorpho90m"] = {
             "snippet": "projects/sat-io/open-datasets/Geomorpho90m/geom",
             "bands": [],
-            "resolution": 250,
-            "edge_size": 256,
+            "resolution": 256,
             "start_date": None,
             "end_date": None,
         }
@@ -166,8 +114,7 @@ def get_sensor_products(
                 "VV": "projects/sat-io/open-datasets/S1GBM/normalized_s1_backscatter_VV",
             },
             "bands": [],
-            "resolution": 100,
-            "edge_size": 2560,
+            "resolution": 128,
             "start_date": None,
             "end_date": None,
         }
@@ -179,7 +126,7 @@ def get_sensor_products(
                 for key in [
                     "bdod_mean",
                     "cec_mean",
-                    "cvfo_mean",
+                    "cfvo_mean",
                     "clay_mean",
                     "sand_mean",
                     "silt_mean",
@@ -191,18 +138,16 @@ def get_sensor_products(
                 ]
             },
             "bands": [],
-            "resolution": 250,
-            "edge_size": 256,
+            "resolution": 256,
             "start_date": None,
             "end_date": None,
         }
 
-    if "global_salinity" in product:
-        sensors["global_salinity"] = {
+    if "soil_salinity" in product:
+        sensors["soil_salinity"] = {
             "snippet": "projects/sat-io/open-datasets/global_soil_salinity",
             "bands": [],
-            "resolution": 250,
-            "edge_size": 256,
+            "resolution": 256,
             "start_date": None,
             "end_date": None,
         }
@@ -214,8 +159,7 @@ def get_sensor_products(
                 for key in ["global_ai_yearly", "global_ai_monthly"]
             },
             "bands": [],
-            "resolution": 1000,
-            "edge_size": 64,
+            "resolution": 1024,
             "start_date": None,
             "end_date": None,
         }
@@ -233,18 +177,16 @@ def get_sensor_products(
                 ]
             },
             "bands": [],
-            "resolution": 1000,
-            "edge_size": 64,
+            "resolution": 1024,
             "start_date": None,
             "end_date": None,
         }
 
-    if "ESA_WorldCover_v200" in product:
-        sensors["ESA_WorldCover_v200"] = {
+    if "WorldCover" in product:
+        sensors["WorldCover"] = {
             "snippet": "ESA/WorldCover/v200",
             "bands": ["Map"],
-            "resolution": 10,
-            "edge_size": 6400,
+            "resolution": 128,
             "start_date": "2021-01-01",
             "end_date": "2022-01-01",
         }
@@ -253,20 +195,60 @@ def get_sensor_products(
         sensors["OpenLandMap"] = {
             "snippet": "OpenLandMap/PNV/PNV_BIOME-TYPE_BIOME00K_C/v01",
             "bands": ["biome_type"],
-            "resolution": 1000,
-            "edge_size": 64,
+            "resolution": 1024,
             "start_date": "2001-01-01",
             "end_date": "2002-01-01",
         }
 
-    if "Oxford_MAP" in product:
-        sensors["Oxford_MAP"] = {
-            "snippet": "projects/sat-io/open-datasets/oxford_map",
-            "bands": ["map"],
-            "resolution": 5000,
-            "edge_size": 64,
+    if "malaria" in product:
+        sensors["malaria"] = {
+            "snippet": {
+                "level1": "projects/sat-io/open-datasets/IUCN_HABITAT/iucn_habitatclassification_composite_lvl1_ver004",
+                "level2": "projects/sat-io/open-datasets/IUCN_HABITAT/iucn_habitatclassification_composite_lvl2_ver004",
+            },
+            "bands": [],
+            "resolution": 5120,
             "start_date": "2001-01-01",
             "end_date": "2002-01-01",
+        }
+
+    if "habitat" in product:
+        sensors["habitat"] = {
+            "snippet": "Oxford/MAP/IGBP_Fractional_Landcover_5km_Annual",
+            "bands": [
+                "Overall_Class",
+                "Water",
+                "Evergreen_Needleleaf_Forest",
+                "Evergreen_Broadleaf_Forest",
+                "Deciduous_Needleleaf_Forest",
+                "Deciduous_Broadleaf_Forest",
+                "Mixed_Forest",
+                "Closed_Shrublands",
+                "Open_Shrublands",
+                "Woody_Savannas",
+                "Savannas",
+                "Grasslands",
+                "Permanent_Wetlands",
+                "Croplands",
+                "Urban_And_Built_Up",
+                "Cropland_Natural_Vegetation_Mosaic",
+                "Snow_And_Ice",
+                "Barren_Or_Sparsely_Populated",
+                "Unclassified",
+                "No_Data",
+            ],
+            "resolution": 1024,
+            "start_date": None,
+            "end_date": None,
+        }
+
+    if "GLO_DEM" in product:
+        sensors["GLO_DEM"] = {
+            "snippet": "COPERNICUS/DEM/GLO30",
+            "bands": ["DEM", "EDM", "FLM", "HEM", "WBM"],
+            "resolution": 128,
+            "start_date": None,
+            "end_date": None,
         }
 
     return Sensors(sensors=sensors)

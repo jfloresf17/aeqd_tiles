@@ -1,143 +1,17 @@
 import pathlib
 from calendar import monthrange
 from datetime import datetime
-from typing import List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 import ee
 import geopandas as gpd
-import numpy as np
-import pyproj
 import requests
-import shapely
 import tqdm
-import xarray as xr
 
-from datamodels import get_equi7_tiles, get_sensor_products
+from datamodels import get_sensor_products
 
 # Initialize Earth Engine with high volume
 ee.Initialize(opt_url="https://earthengine-highvolume.googleapis.com")
-
-
-def generate_grids(
-    tile_name: str = "AF",
-    tile_extent: float = 500 * 128,
-    dst_path: pathlib.Path = pathlib.Path("./output"),
-) -> List[List[float]]:
-    """
-    Generate a grid of points for a given Equi7Grid tile name.
-
-    Args:
-    tile_name (str): The Equi7Grid tile name.
-    tile_extent (float): The extent of the grid cell in meters.
-    dst_path (pathlib.Path): The destination path to save the grid cells.
-
-    Returns:
-    List[List[float]]: A list of lists with the coordinates of the
-    grid cells.
-    """
-
-    # Get the tile grid
-    equi7 = get_equi7_tiles()
-    tiles = equi7.tiles[tile_name]
-    gdf = gpd.read_file(tiles.grid_path)
-
-    # Get the PROJ4-string
-    with open(tiles.prj_path, "r") as file:
-        crs = file.read()
-
-    # Make a grid from the layer
-    xmin, ymin, xmax, ymax = gdf.total_bounds
-
-    # create the cells in a loop
-    grid_cells = []
-    for x0 in np.arange(xmin, xmax + tile_extent, tile_extent):
-        for y0 in np.arange(ymin, ymax + tile_extent, tile_extent):
-            # bounds
-            x1 = x0 - tile_extent
-            y1 = y0 + tile_extent
-
-            # create the shapely geometry
-            cell_box = shapely.geometry.box(x0, y0, x1, y1)
-
-            # append the centroid to the list
-            grid_cells.append(cell_box)
-
-    # Create a GeoDataFrame
-    cell = gpd.GeoDataFrame(geometry=grid_cells)
-
-    # Intersect with the land tile layer
-    gdf_land = gdf[gdf["COVERSLAND"] == 1]
-    cell_land = cell[cell.intersects(gdf_land.unary_union)]
-
-    # Intersect with the countries layer
-    countries = gpd.read_file(tiles.land_path)
-    cell_countries = cell_land[cell_land.intersects(countries.unary_union)]
-
-    # Get centroids
-    cell_points = cell_countries.copy()
-    cell_points["geometry"] = cell_points["geometry"].centroid
-
-    # Set projection
-    cell_points.set_crs(crs, inplace=True)
-
-    # Generate a buffer around each point
-    buffer = cell_points.buffer(tile_extent / 2).envelope
-    buffer_list = []
-    for geom in tqdm.tqdm(buffer):
-        minx, miny, maxx, maxy = geom.bounds
-        polygon = [[minx, miny], [minx, maxy], [maxx, maxy], [maxx, miny]]
-
-        # Convert to latlon
-        transformer = pyproj.Transformer.from_crs(
-            crs, "EPSG:4326", always_xy=True
-        )
-        latlon_coords = [
-            list(transformer.transform(x[0], x[1])) for x in polygon
-        ]
-
-        # append to list
-        buffer_list.append(latlon_coords)
-
-    # Save buffer list as GeoJSON
-    gdf_buffer = gpd.GeoDataFrame(
-        data={"id": range(len(buffer_list))},
-        geometry=gpd.GeoSeries(
-            [shapely.Polygon(coords) for coords in buffer_list]
-        ),
-        crs="EPSG:4326",
-    )
-
-    folder_path = dst_path / tile_name
-    folder_path.mkdir(parents=True, exist_ok=True)
-
-    gdf_buffer.to_file(
-        f"{folder_path}/{tile_name}_buffers.geojson", driver="GeoJSON"
-    )
-
-
-def apply_quality_filter(
-    image: ee.Image, data_bands: List[str], quality_bands: List[str]
-) -> ee.Image:
-    """
-    Apply quality filter to the image.
-    Args:
-    image (ee.Image): The image to apply the filter.
-    data_bands (List[str]): The data bands to filter.
-    quality_bands (List[str]): The quality bands to filter.
-
-    Returns:
-    ee.Image: The filtered image.
-    """
-    # Apply filter to each quality bands
-    for dband, qband in zip(data_bands, quality_bands):
-        # Get the quality band
-        quality = image.select(qband)
-        # Mask the data band
-        data = image.select(dband).updateMask(quality.eq(0))
-        # Replace the data band
-        image = image.addBands(data, overwrite=True)
-
-    return image
 
 
 def filter_by_month(
@@ -186,12 +60,38 @@ def filter_by_month(
     return months_filter
 
 
+def apply_quality_filter(
+    image: ee.Image, data_bands: List[str], quality_bands: List[str]
+) -> ee.Image:
+    """
+    Apply quality filter to the image.
+    Args:
+    image (ee.Image): The image to apply the filter.
+    data_bands (List[str]): The data bands to filter.
+    quality_bands (List[str]): The quality bands to filter.
+
+    Returns:
+    ee.Image: The filtered image.
+    """
+
+    # Apply filter to each quality bands
+    for dband, qband in zip(data_bands, quality_bands):
+        # Get the quality band
+        quality = image.select(qband)
+        # Mask the data band
+        data = image.select(dband).updateMask(quality.eq(0))
+        # Replace the data band
+        image = image.addBands(data, overwrite=True)
+
+    return image
+
+
 def save_composite(
     composite: ee.Image,
     aoi: ee.Geometry,
     crs: str,
     resolution: int,
-    out_path: str,
+    out_path: pathlib.Path,
     data_bands: List[str],
 ):
     """
@@ -201,7 +101,7 @@ def save_composite(
     aoi (ee.Geometry): The area of interest.
     crs (str): The coordinate reference system.
     resolution (int): The resolution of the composite.
-    out_path (str): The output path to save the composite.
+    out_path (pathlib.Path): The output path to save the composite.
     data_bands (List[str]): The data bands to save.
     """
 
@@ -228,135 +128,248 @@ def save_composite(
         )
 
 
-def composite_collection(
-    geom: shapely.geometry.Polygon,
-    tile_name: str = "AF",
-    tile_id: int = 0,
-    product: str = "MODIS_061_MCD43A4",
-    subproduct: Optional[str] = None,
-    start_date: str = None,
-    end_date: str = None,
-    dst_folder: Optional[pathlib.Path] = pathlib.Path("./output"),
+def download_modis(
+    product: str,
+    snippet: str,
+    bands: str,
+    start_date: str,
+    end_date: str,
+    aoi: ee.Geometry.Polygon,
+    crs: str,
+    resolution: int,
+    folder: pathlib.Path,
 ):
     """
-    Composite the collection.
+    Retrieves a MODIS image collection based on specified parameters and filters.
 
-    Args:
-    geom (shapely.geometry.Polygon): The geometry to filter the collection.
-    tile_name (str): The Equi7Grid tile name.
-    tile_id (int): The tile id for grid.
-    product (str): The product name.
-    subproducts (str): The subproduct name of selected product. Default is None.
-    time (str): The time unit to composite by unit time. Can be "year", "month", "week", "day".
-    start_date (str): The start date.
-    end_date (str): The end date.
-    dst_folder (pathlib.Path): The destination folder to save the composite. Default is "./output".
+    Parameters:
+    - product (str): The MODIS product type, e.g., "MODIS_BRDF" or "MODIS_LAND_SURFACE".
+    - snippet (str): The snippet string for accessing the MODIS image collection.
+    - bands (str): The bands to select from the MODIS images.
+    - start_date (str): The start date for filtering the MODIS image collection (format: "YYYY-MM-DD").
+    - end_date (str): The end date for filtering the MODIS image collection (format: "YYYY-MM-DD").
+    - aoi (ee.Geometry.Polygon): The area of interest (AOI) as an Earth Engine geometry.
+    - crs (str): The coordinate reference system (CRS) for the MODIS images.
+    - resolution (int): The resolution for the MODIS images.
+    - folder (pathlib.Path): The folder to save the composite images.
     """
 
-    # Convert shapely.geometry.Polygon to ee.Geometry.Polygon
-    shape = list(geom.exterior.coords.xy)
-    coords = [[x, y] for x, y in zip(shape[0], shape[1])]
-    polygon = ee.Geometry.Polygon(coords)
+    # Filtering by diferent MODIS products
+    if product == "MODIS_BRDF":
+        # Filter by quality bands
+        quality_bands = bands[7:]
+        data_bands = bands[:7]
 
-    # Get AOI
-    aoi = polygon.getInfo()
+    elif product == "MODIS_LAND_SURFACE":
+        # Filter by quality bands
+        quality_bands = bands[2:]
+        data_bands = bands[:2]
 
-    # Get the sensor metadata
+    # Get end_date
+    if end_date is None:
+        end_date = "2023-12-31"
+
+    # Get the collection
+    collection = (
+        ee.ImageCollection(snippet)
+        .filterBounds(aoi)
+        .filterDate(start_date, end_date)
+        .select(bands)
+    )
+
+    # Apply quality filter
+    quality_collection = collection.map(
+        lambda image: apply_quality_filter(image, data_bands, quality_bands)
+    )
+
+    # Generate a compsity by months
+    filter_months = filter_by_month(start_date, end_date)
+
+    for i, months in enumerate(filter_months):
+        monthly_composites = []
+        for month in months:
+            month_collection = quality_collection.filterDate(
+                month[0].strftime("%Y-%m-%d"), month[1].strftime("%Y-%m-%d")
+            )
+            # Composite the collection
+            monthly_composite = month_collection.median()
+            monthly_composites.append(monthly_composite)
+
+        # Combine the monthly composites to generate a new collection
+        composite = ee.ImageCollection(monthly_composites).median()
+
+        # Generate the out path for each month
+        month_name = datetime(2000, i + 1, 1).strftime("%B")
+        out_path = folder / f"{product}_{month_name}.tif"
+
+        # Save the composite
+        save_composite(composite, aoi, crs, resolution, out_path, data_bands)
+
+
+def download_product(
+    product: str,
+    snippet: str,
+    bands: List[str],
+    start_date: str,
+    end_date: str,
+    aoi: ee.Geometry.Polygon,
+    crs: str,
+    resolution: int,
+    folder: pathlib.Path,
+):
+    """
+    Gets products from an Earth Engine image collection based on specified parameters.
+
+    Parameters:
+    - product (str): The name of the product.
+    - snippet (str): The snippet for accessing the image collection.
+    - bands (List[str]): The bands to select from the images.
+    - start_date (str): The start date for filtering the image collection (format: "YYYY-MM-DD").
+    - end_date (str): The end date for filtering the image collection (format: "YYYY-MM-DD").
+    - aoi (ee.Geometry.Polygon): The area of interest (AOI) as an Earth Engine geometry.
+    - crs (str): The coordinate reference system (CRS) for the images.
+    - resolution (int): The resolution for the images.
+    - folder (pathlib.Path): The folder to save the image.
+    """
+
+    # Check if there are no bands or any date is missing
+    if not bands or start_date is None or end_date is None:
+        # Filter the image by the region of interest and get the first image
+        image = ee.ImageCollection(snippet).filterBounds(aoi).median()
+    else:
+        # If the product is "OpenLandMap", clip the image by the region of interest
+        # Otherwise, filter the collection by the region of interest, date, and bands
+        if product == "OpenLandMap":
+            image = ee.Image(snippet).clip(aoi)
+        else:
+            image = (
+                ee.ImageCollection(snippet)
+                .filterBounds(aoi)
+                .filterDate(start_date, end_date)
+                .select(bands)
+                .median()
+            )
+
+    out_path = folder / f"{product}.tif"
+    save_composite(image, aoi, crs, resolution, out_path, bands)
+
+
+def download_subproduct(
+    product: str,
+    snippet: Dict[str, str],
+    bands: List[str],
+    aoi: ee.Geometry.Polygon,
+    crs: str,
+    resolution: int,
+    folder: pathlib.Path,
+):
+    """
+    Gets sub-products from an Earth Engine image collection based on specified parameters.
+
+    Parameters:
+    - product (str): The name of the product.
+    - snippet (Dict[str, str]): A dictionary containing the snippets for accessing the image collections.
+    - bands (str): The bands to select from the images.
+    - aoi (ee.Geometry.Polygon): The area of interest (AOI) as an Earth Engine geometry.
+    - crs (str): The coordinate reference system (CRS) for the images.
+    - resolution (int): The resolution for the images.
+    - folder (pathlib.Path): The folder to save the image.
+    """
+
+    for subproduct, snippet2 in snippet.items():
+        if product in ["malaria", "isric"] or subproduct in [
+            "ruggedness-index",
+            "global_ai_yearly",
+        ]:
+            # Clip the image by the region of interest
+            composite = ee.Image(snippet2).clip(aoi)
+        else:
+            # Filter the image collection by the region of interest and compute the median
+            composite = ee.ImageCollection(snippet2).filterBounds(aoi).median()
+
+        subfolder = folder / product
+        subfolder.mkdir(parents=True, exist_ok=True)
+
+        out_path = subfolder / f"{subproduct}.tif"
+        save_composite(composite, aoi, crs, resolution, out_path, bands)
+
+
+def download(
+    products: List[str], zone: str = "AF", T1_tile: str = "E0589N0557T1"
+):
+    """
+    Downloads satellite imagery products for a specified T1 tile.
+
+    Parameters:
+    - products (List[str]): A list of product names to download.
+    - zone (str, optional): The zone code. Default is "AF".
+    - T1_tile (str, optional): The name of the T1 tile. Default is "E0589N0557T1".
+    """
+
+    # Open gpkg
+    gdf_t1 = gpd.read_file(
+        f"https://huggingface.co/datasets/jfloresf/landclip/resolve/main/grids/{zone}/{zone}.gpkg",
+        layer="PROJ_T1",
+    )
+    shape = gdf_t1[gdf_t1["TILE"] == T1_tile]
+
+    # Get tile codes
+    search_path = f"./landclip/{zone}"
+    matching_files = list(pathlib.Path(search_path).rglob("*T1*"))
+
+    # Filtrar para obtener el archivo exacto que coincide con T1_tile
+    code = next((file for file in matching_files if file.name == T1_tile), None)
+
+    # Get PROJ crs
+    crs = gdf_t1.crs.to_string()
+
+    # Convert to lat/lon
+    geog_shape = shape.to_crs("EPSG:4326")
+    shape = geog_shape.geometry.values[0]
+
+    # Get BBox geometry
+    buffer_shape = list(shape.exterior.coords.xy)
+    buffer_coords = [[x, y] for x, y in zip(buffer_shape[0], buffer_shape[1])]
+    aoi = ee.Geometry.Polygon(buffer_coords)
+
     sensor_metadata = get_sensor_products()
-    snippet = sensor_metadata.sensors[product].snippet
-    resolution = sensor_metadata.sensors[product].resolution
 
-    # Get the bands
-    bands = sensor_metadata.sensors[product].bands
-
-    # Get start and end date
-    if start_date is None and end_date is None:
+    # Download the products
+    for product in tqdm.tqdm(products):
+        snippet = sensor_metadata.sensors[product].snippet
+        resolution = sensor_metadata.sensors[product].resolution
+        bands = sensor_metadata.sensors[product].bands
         start_date = sensor_metadata.sensors[product].start_date
         end_date = sensor_metadata.sensors[product].end_date
 
-    # Get the CRS
-    equi7 = get_equi7_tiles()
-    tiles = equi7.tiles[tile_name]
-    with open(tiles.prj_path, "r") as file:
-        crs = file.read()
-
-    # Get the folder to save the composite
-    tile_id = str(tile_id).zfill(4)
-    folder = dst_folder / f"{tile_name}/{product}"
-    folder = pathlib.Path(folder)
-    folder.mkdir(parents=True, exist_ok=True)
-
-    # Download the composite
-    if "MODIS" in product:
-        # Filtering by diferent MODIS products
-        if "MODIS_061_MCD43A4" in product:
-            # Filter by quality bands
-            quality_bands = bands[7:]
-            data_bands = bands[:7]
-
-        elif "MODIS_061_MOD11A1" in product:
-            # Filter by quality bands
-            quality_bands = bands[2:]
-            data_bands = bands[:2]
-
-        # Get the collection
-        collection = (
-            ee.ImageCollection(snippet)
-            .filterBounds(aoi)
-            .filterDate(start_date, end_date)
-            .select(bands)
-        )
-
-        # Apply quality filter
-        quality_collection = collection.map(
-            lambda image: apply_quality_filter(image, data_bands, quality_bands)
-        )
-
-        # Generate a compsity by months
-        filter_months = filter_by_month(start_date, end_date)
-
-        for i, months in tqdm.tqdm(enumerate(filter_months)):
-            monthly_composites = []
-            for month in months:
-                month_collection = quality_collection.filterDate(
-                    month[0].strftime("%Y-%m-%d"), month[1].strftime("%Y-%m-%d")
-                )
-                # Composite the collection
-                monthly_composite = month_collection.median()
-                monthly_composites.append(monthly_composite)
-
-            # Combine the monthly composites to generate a new collection
-            composite = ee.ImageCollection(monthly_composites).median()
-
-            # Generate the out path
-            month_name = datetime(2000, i + 1, 1).strftime("%B")
-            out_path = folder / f"{tile_id}_{month_name}.tif"
-
-            # Save the composite
-            save_composite(
-                composite, aoi, crs, resolution, out_path, data_bands
+        # Append images collections
+        if "MODIS" in product:
+            download_modis(
+                product,
+                snippet,
+                bands,
+                start_date,
+                end_date,
+                aoi,
+                crs,
+                resolution,
+                code,
             )
 
-    elif product in ["s1gbm", "isric", "ai0", "gwa"]:
-        snippet2 = snippet[subproduct]
-        collection = ee.ImageCollection(snippet2).filterBounds(aoi)
-        composite = collection.median()
+        elif product in ["s1gbm", "isric", "ai0", "gwa", "malaria"]:
+            download_subproduct(product, snippet, aoi, crs, resolution, code)
 
-        # Generate the out path
-        out_path = folder / subproduct
-        pathlib.Path(out_path).mkdir(parents=True, exist_ok=True)
+        else:
+            download_product(
+                product,
+                snippet,
+                bands,
+                start_date,
+                end_date,
+                aoi,
+                crs,
+                resolution,
+                code,
+            )
 
-        out_path = out_path / f"{tile_id}.tif"
-
-        # Save the composite
-        save_composite(composite, aoi, crs, resolution, out_path, bands)
-
-    else:
-        collection = ee.ImageCollection(snippet).filterBounds(aoi)
-        # Composite the collection
-        composite = collection.median()
-
-        out_path = folder / f"{tile_id}.tif"
-
-        # Save the composite
-        save_composite(composite, aoi, crs, resolution, out_path, bands)
+        print(f"{product} downloaded successfully!")

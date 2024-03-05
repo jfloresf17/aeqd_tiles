@@ -1,63 +1,28 @@
-import pathlib
+from utils import download
 
-import geopandas as gpd
+## ALL PRODUCTS
+# products = ["MODIS_BRDF", #date and bands
+#             "WorldCLIM", #date and bands
+#             "MODIS_LAND_SURFACE", #date and bands
+#             "CCNL", #date and bands
+#             "fabdem", #no date and no bands
+#             "geomorpho90m", #no date and no bands
+#             "s1gbm", #no date and no bands
+#             "isric", #no date and no bands
+#             "soil_salinity", #no date and no bands
+#             "ai0", #no date and no bands
+#             "gwa", #no date and no bands
+#             "WorldCover", #date and bands
+#             "OpenLandMap", #date and bands
+#             "malaria", #no bands
+#             "habitat", #no date
+#             "GLO_DEM" #no date
+#           ]
 
-from utils import composite_collection, generate_grids
+sample_products = [
+    "MODIS_BRDF",  # date and bands
+    "MODIS_LAND_SURFACE",  # date and bands
+    "GLO_DEM",  # no date
+]
 
-tile_name = "SA"  # From ["AF", "AN", "AS", "EU", "NA", "OC", "SA"]
-tile_id = 292  # Aleatory shape number
-dst_path = pathlib.Path("./output")
-
-# Generate tile grid
-generate_grids(tile_name=tile_name, tile_extent=500 * 128, dst_path=dst_path)
-
-#  Load the generated grid
-grid = gpd.read_file(f"./output/{tile_name}/{tile_name}_buffers.geojson")
-
-# Filter by tile_id
-grid = grid[grid["id"] == tile_id]
-
-# Get the shapely geometry
-geom = grid.geometry.values[0]
-
-# Testing the composite collection for:
-
-# - MODIS_061_MCD43A4
-composite_collection(
-    geom=geom,
-    tile_name=tile_name,
-    tile_id=tile_id,
-    product="MODIS_061_MCD43A4",
-    start_date="2014-01-01",
-    end_date="2022-12-31",
-    dst_folder=dst_path,
-)
-
-# - MODIS_061_MOD11A1
-composite_collection(
-    geom=geom,
-    tile_name=tile_name,
-    tile_id=tile_id,
-    product="MODIS_061_MOD11A1",
-    start_date="2014-01-01",
-    end_date="2022-12-31",
-    dst_folder=dst_path,
-)
-# - s1gbm
-composite_collection(
-    geom=geom,
-    tile_name=tile_name,
-    tile_id=tile_id,
-    product="s1gbm",
-    subproduct="VV",
-    dst_folder=dst_path,
-)
-
-# - global_salinity
-composite_collection(
-    geom=geom,
-    tile_name=tile_name,
-    tile_id=tile_id,
-    product="global_salinity",
-    dst_folder=dst_path,
-)
+download(sample_products, zone="SA", T1_tile="E0589N0557T1")
